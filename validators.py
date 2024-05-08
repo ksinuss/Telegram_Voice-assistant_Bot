@@ -38,7 +38,7 @@ def is_stt_block_limit(user_id, duration):
     if all_blocks >= MAX_USER_STT_BLOCKS:
         msg = f"Превышен общий лимит SpeechKit STT {MAX_USER_STT_BLOCKS}. Использовано {all_blocks} блоков. Доступно: {MAX_USER_STT_BLOCKS - all_blocks}"
         return None, msg
-    return audio_blocks
+    return audio_blocks, None
 
 # проверяем, не превысил ли пользователь лимиты на преобразование текста в аудио
 def is_tts_symbol_limit(user_id, text):
