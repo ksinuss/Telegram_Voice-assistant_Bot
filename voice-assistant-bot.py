@@ -41,12 +41,71 @@ def logs_debug(message):
     with open("log.txt", "rb") as f:
         bot.send_document(message.chat.id, f)
 
+@bot.message_handler(commands=['stt'])
+def stt_handler(message):
+    user_id = message.from_user.id
+    bot.send_message(user_id, 'Отправь голосовое сообщение, чтобы я его распознал!')
+    bot.register_next_step_handler(message, stt)
+
+# Переводим голосовое сообщение в текст после команды stt
+def stt(message):
+    user_id = message.from_user.id
+    # Проверка, что сообщение действительно голосовое
+    if not message.voice:
+        bot.send_message(user_id, 'Отправь голосовое сообщение')
+        return
+    # Проверка на доступность аудиоблоков
+    stt_blocks, error_message = is_stt_block_limit(user_id, message.voice.duration)
+    if error_message:
+        bot.send_message(user_id, error_message, reply_markup=make_keyboard(['/stt', '/tts', '/debug', '/help', '/about']))
+        return
+    file_id = message.voice.file_id # получаем id голосового сообщения
+    file_info = bot.get_file(file_id) # получаем информацию о голосовом сообщении
+    file = bot.download_file(file_info.file_path) # скачиваем голосовое сообщение
+    # Получаем статус и содержимое ответа от SpeechKit
+    status, text = speech_to_text(file) # преобразовываем голосовое сообщение в текст
+    # Если статус True - отправляем текст сообщения и сохраняем в БД, иначе - сообщение об ошибке
+    if status:
+        # Записываем сообщение и кол-во аудиоблоков в БД
+        add_message(user_id=user_id, full_message=[text, 'user', 0, 0, stt_blocks])
+        bot.send_message(user_id, text, reply_to_message_id=message.id, reply_markup=make_keyboard(['/stt', '/tts', '/debug', '/help', '/about']))
+    else:
+        bot.send_message(user_id, text, reply_markup=make_keyboard(['/stt', '/tts', '/debug', '/help', '/about']))
+
+@bot.message_handler(commands=['tts'])
+def tts_handler(message):
+    user_id = message.from_user.id
+    bot.send_message(user_id, 'Отправь следующим сообщением текст, чтобы я его озвучил!')
+    bot.register_next_step_handler(message, tts)
+
+def tts(message):
+    user_id = message.from_user.id
+    text = message.text
+    # Проверка, что сообщение действительно текстовое
+    if message.content_type != 'text':
+        bot.send_message(user_id, 'Отправь текстовое сообщение')
+        return
+    # Проверка на лимит символов для SpeechKit
+    tts_symbols, error_message = is_tts_symbol_limit(user_id, text)
+    # Запись ответа GPT в БД
+    add_message(user_id=user_id, full_message=[text, 'user', 0, tts_symbols, 0])
+    if error_message:
+        bot.send_message(user_id, error_message, reply_markup=make_keyboard(['/stt', '/tts', '/debug', '/help', '/about']))
+        return
+    # Получаем статус и содержимое ответа от SpeechKit
+    status, content = text_to_speech(text)
+    # Если статус True - отправляем голосовое сообщение, иначе - сообщение об ошибке
+    if status:
+        bot.send_voice(user_id, content, reply_to_message_id=message.id)
+    else:
+        bot.send_message(user_id, content, reply_markup=make_keyboard(['/stt', '/tts', '/debug', '/help', '/about']))
+
 @bot.message_handler(commands=['start'])
 def start(message):
     user_name = message.from_user.first_name
     bot.send_message(message.chat.id,
                      text=f'Привет, {user_name}! Я бот - голосовой помощник. Скорее придумывай сообщение, отправляй его текстом или голосовым, а я отвечу тебе!',
-                     reply_markup=make_keyboard(['/help', '/about']))
+                     reply_markup=make_keyboard(['/stt', '/tts', '/help', '/about']))
     logging.info('Отправка приветственного сообщения')
 
 @bot.message_handler(content_types=['text'])
@@ -68,7 +127,7 @@ def handle_text(message):
         total_gpt_tokens, error_message = is_gpt_token_limit(last_messages, total_spent_tokens)
         if error_message:
             # если что-то пошло не так — уведомляем пользователя и прекращаем выполнение функции
-            bot.send_message(user_id, error_message, reply_markup=make_keyboard(['/debug', '/help', '/about']))
+            bot.send_message(user_id, error_message, reply_markup=make_keyboard(['/stt', '/tts', '/debug', '/help', '/about']))
             return
         # отправляем запрос к GPT
         status_gpt, answer_gpt, tokens_in_answer = ask_gpt(last_messages)
@@ -85,7 +144,7 @@ def handle_text(message):
         bot.send_message(user_id, answer_gpt, reply_to_message_id=message.id)  # отвечаем пользователю текстом
     except Exception as e:
         logging.error(e) # если ошибка — записываем её в логи
-        bot.send_message(message.from_user.id, "Не получилось ответить. Попробуй написать другое сообщение")
+        bot.send_message(message.from_user.id, "Не получилось ответить. Попробуй написать другое сообщение", reply_markup=make_keyboard(['/stt', '/tts', '/debug', '/help', '/about']))
 
 @bot.message_handler(content_types=['voice'])
 def handle_voice(message: telebot.types.Message):
@@ -94,12 +153,12 @@ def handle_voice(message: telebot.types.Message):
         # Проверка на максимальное количество пользователей
         status_check_users, error_message = check_number_of_users(user_id)
         if not status_check_users:
-            bot.send_message(user_id, error_message)
+            bot.send_message(user_id, error_message, reply_markup=make_keyboard(['/stt', '/tts', '/debug', '/help', '/about']))
             return
         # Проверка на доступность аудиоблоков
         stt_blocks, error_message = is_stt_block_limit(user_id, message.voice.duration)
         if error_message:
-            bot.send_message(user_id, error_message, reply_markup=make_keyboard(['/debug', '/help', '/about']))
+            bot.send_message(user_id, error_message, reply_markup=make_keyboard(['/stt', '/tts', '/debug', '/help', '/about']))
             return
         # Получение информации о голосовом файле и его загрузка
         file_id = message.voice.file_id
@@ -115,7 +174,7 @@ def handle_voice(message: telebot.types.Message):
         last_messages, total_spent_tokens = select_n_last_messages(user_id)
         total_gpt_tokens, error_message = is_gpt_token_limit(last_messages, total_spent_tokens)
         if error_message:
-            bot.send_message(user_id, error_message, reply_markup=make_keyboard(['/debug', '/help', '/about']))
+            bot.send_message(user_id, error_message, reply_markup=make_keyboard(['/stt', '/tts', '/debug', '/help', '/about']))
             return
         status_gpt, answer_gpt, tokens_in_answer = ask_gpt(last_messages) # Обращение к GPT с запросом
         if not status_gpt:
@@ -127,16 +186,16 @@ def handle_voice(message: telebot.types.Message):
         # Запись ответа GPT в БД
         add_message(user_id=user_id, full_message=[answer_gpt, 'assistant', total_gpt_tokens, tts_symbols, 0])
         if error_message:
-            bot.send_message(user_id, error_message, reply_markup=make_keyboard(['/debug', '/help', '/about']))
+            bot.send_message(user_id, error_message, reply_markup=make_keyboard(['/stt', '/tts', '/debug', '/help', '/about']))
             return
         # Преобразование текстового ответа от GPT в голосовое сообщение
         status_tts, voice_response = text_to_speech(answer_gpt)
         if not status_tts:
-            bot.send_message(user_id, answer_gpt, reply_to_message_id=message.id)
+            bot.send_message(user_id, answer_gpt, reply_to_message_id=message.id, reply_markup=make_keyboard(['/stt', '/tts', '/debug', '/help', '/about']))
         else:
             bot.send_voice(user_id, voice_response, reply_to_message_id=message.id)
     except Exception as e:
         logging.error(e)
-        bot.send_message(user_id, "Не получилось ответить. Попробуй записать другое сообщение")
+        bot.send_message(user_id, "Не получилось ответить. Попробуй записать другое сообщение", reply_markup=make_keyboard(['/stt', '/tts', '/debug', '/help', '/about']))
 
 bot.polling()
