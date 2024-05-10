@@ -38,7 +38,7 @@ def about_command(message):
     
 @bot.message_handler(commands=['debug'])
 def logs_debug(message):
-    with open("log.txt", "rb") as f:
+    with open(LOGS, "rb") as f:
         bot.send_document(message.chat.id, f)
 
 @bot.message_handler(commands=['stt'])
